@@ -6,6 +6,9 @@ public enum MonsterState { Wander, Chase, Attack, Death }
 
 public abstract class MonsterBase : MonoBehaviour
 {
+    const float MinWanderDistance = 2f;      // 이보다 가까운 배회 목표는 다시 고른다
+    const float ObstacleCheckRadius = 0.5f;  // 배회 목표 지점의 장애물 검사 반경
+
     #region Variables
     public MonsterState monsterState;
     public MonsterState MonsterState { set { monsterState = value; } }
@@ -67,12 +70,7 @@ public abstract class MonsterBase : MonoBehaviour
 
             case MonsterState.Attack:
                 FallBackState(attackRange, MonsterState.Chase); // 공격 범위 밖이면 추적 상태
-                if (attackCooldownTimer <= 0) // 공격 쿨타임
-                {
-                    StartCoroutine(LookAtPlayer());
-                    StartCoroutine(Attack());
-                    attackCooldownTimer = attackCooldown;
-                }
+                TryAttack();
                 break;
 
             case MonsterState.Death:
@@ -85,29 +83,38 @@ public abstract class MonsterBase : MonoBehaviour
         }
     }
 
+    // 쿨타임이 끝났을 때만 플레이어를 바라보고 공격을 시작한다
+    void TryAttack()
+    {
+        if (attackCooldownTimer > 0) return;
+
+        StartCoroutine(LookAtPlayer());
+        StartCoroutine(Attack());
+        attackCooldownTimer = attackCooldown;
+    }
+
     protected virtual void Wander()
     {
-        if (agent.remainingDistance <= agent.stoppingDistance && !agent.pathPending) // 목표에 도달했을 때만 다음 위치 찾기
+        bool arrived = agent.remainingDistance <= agent.stoppingDistance && !agent.pathPending; // 목표에 도달했을 때만 다음 위치 찾기
+
+        if (arrived && TryGetWanderPoint(out Vector3 destination))
         {
-            Vector3 randomDir = Random.insideUnitSphere * moveRadius; // 현 위치를 기준으로 랜덤한 위치 찾기
-            randomDir += transform.position;
-
-            randomDir.y = transform.position.y; // 수평으로만 이동하도록 고정
-
-            if (Vector3.Distance(transform.position, randomDir) < 2f)  // 목표 위치가 너무 가까우면 다시 계산
-            {
-                return;
-            }
-
-            if (Physics.CheckSphere(randomDir, 0.5f, obstaclesLayer)) // 장애물 레이어 체크 후 없으면 해당 위치로 이동
-            {
-                return; // 충돌 있으면 이동 X
-            }
-
-            agent.SetDestination(randomDir); // 새 목적지 설정
+            agent.SetDestination(destination);
         }
 
         MoveBlendTree();
+    }
+
+    // 현재 위치 기준 반경 안에서 갈 수 있는 무작위 지점을 고른다 (너무 가깝거나 장애물과 겹치면 실패)
+    bool TryGetWanderPoint(out Vector3 point)
+    {
+        point = transform.position + Random.insideUnitSphere * moveRadius;
+        point.y = transform.position.y; // 수평으로만 이동하도록 고정
+
+        bool tooClose = Vector3.Distance(transform.position, point) < MinWanderDistance;
+        bool blocked = Physics.CheckSphere(point, ObstacleCheckRadius, obstaclesLayer);
+
+        return !tooClose && !blocked;
     }
 
     protected virtual void Chase()
